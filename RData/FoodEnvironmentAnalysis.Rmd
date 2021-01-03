@@ -1,0 +1,213 @@
+---
+title: 'Project 1'
+author: "Samantha Roman"
+date: "10/21/2020"
+output: html_document
+---
+
+## setup
+
+```{r setup, echo=TRUE, results='hide'}
+
+# Load tidyverse into the workspace
+library(tidyverse)
+
+```
+
+```{r load-data, results = "hide"}
+
+# load data from USDA ERS Food Environment Atlas
+data <- read_csv("FoodEnvironmentData.csv")
+
+# color palette generated using paletton.com
+color.palette <- c("#D48E1C", "#137482", "#D44E1C")
+
+```
+
+```{r scatter-plot}
+
+# state average food access - food insecurity included for use in later plot
+# AK removed as outlier
+state.access <- data %>% 
+  filter((Variable_Code == "PCT_LACCESS_POP15" |
+            Variable_Code == "PCT_LACCESS_LOWI15" |
+            Variable_Code == "PCT_LACCESS_HHNV15" |
+            Variable_Code == "FOODINSEC_15_17"),
+         State != "AK") %>%
+  group_by(Variable_Code, State) %>%
+  summarize(Avg_Access = mean(Value)) %>%
+  mutate(Access = ifelse(Variable_Code == "PCT_LACCESS_POP15", "Low access",
+                       ifelse(Variable_Code == "PCT_LACCESS_LOWI15", "Low access, low income",
+                              ifelse(Variable_Code == "PCT_LACCESS_HHNV15", "Low access, no vehicle", ""))))
+
+# correlation coefficient labels (values calculated using cor.test below)
+data_text <- data.frame(
+  label = c("r = -0.113", "r = -0.003", "r = 0.172"),
+  Access = c("Low access", "Low access, low income", "Low access, no vehicle"),
+  x_pos = c(30, 12.5, 1),
+  y_pos = c(16, 16, 16))
+
+# correlation - repeat filter for each access category 
+corr.data <- data %>% 
+  filter(Variable_Code == "FOODINSEC_15_17") %>%
+  group_by(State) %>%
+  summarize(Avg_Insecurity = mean(Value)) %>%
+  merge(state.access, by = "State") %>%
+  filter(Variable_Code == "PCT_LACCESS_POP15")
+
+cor.test(corr.data$Avg_Access, corr.data$Avg_Insecurity, method = "pearson")
+
+# merge food insecurity (by state) and access low income (by state)
+# scatter plots of each relationship
+data %>% 
+  filter(Variable_Code == "FOODINSEC_15_17") %>%
+  group_by(State) %>%
+  summarize(Avg_Insecurity = mean(Value)) %>%
+  merge(state.access, by = "State") %>%
+  filter(Variable_Code != "FOODINSEC_15_17") %>%
+  ggplot(mapping = aes(x = Avg_Access, y = Avg_Insecurity, color = Access)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_color_manual(values = color.palette) +
+  facet_wrap(~ Access, scales = "free_x") +
+  scale_x_continuous(limits = c(0, NA)) +
+  labs(title = "Food access tells us little about food insecurity",
+       subtitle = "By percentage of state population, 2015\n",
+       x = "\n% who have low food access",
+       y = "% who are food insecure\n") +
+  theme(panel.background = element_blank(),
+        panel.spacing = unit(4, "lines"),
+        line = element_blank(),
+        axis.line.x.bottom = element_line(color = "black", size = 1),
+        panel.grid.major.y = element_line(color = "#d9d9d9"),
+        strip.text = element_blank(),
+        axis.text = element_text(size = 16),
+        axis.title = element_text(size = 16),
+        plot.title = element_text(size = 20, face = "bold"),
+        plot.subtitle = element_text(size = 18),
+        legend.position = "top",
+        legend.title= element_blank(),
+        legend.text = element_text(size = 16),
+        legend.key = element_rect(fill = "white")
+        ) +
+  geom_text(data = data_text,
+            mapping = aes(x = x_pos, y = y_pos, label = label),
+            hjust = 0,
+            vjust = 0,
+            size = 5.5,
+            show.legend = FALSE,
+            inherit.aes = FALSE)
+ggsave("insecurity_scatter.png", width = 14, height = 7)
+
+```
+
+```{r bar-plot}
+
+# persistent poverty counties
+data.pov <- data %>%
+  filter(Variable_Code == "PERPOV10") %>%
+  mutate(PERPOV10 = ifelse(Value == 1, "Persistant poverty", "Not persistant poverty")) %>%
+  select(FIPS, PERPOV10)
+
+# merge with stores and graph - barplot
+data %>%
+  filter(Variable_Code == "GROCPTH16" |
+           Variable_Code == "CONVSPTH16" |
+           Variable_Code == "FFRPTH16") %>%
+  merge(data.pov, by = "FIPS") %>%
+  group_by(PERPOV10, Variable_Code) %>%
+  summarize(Avg_Stores = mean(Value * 10), # multiply by 10 to get per 100
+            SE_Stores = sd(Value * 10) / sqrt(length(Value))) %>%
+  mutate(Store = ifelse(Variable_Code == "GROCPTH16", "Grocery stores",
+                       ifelse(Variable_Code == "CONVSPTH16", "Convenience stores",
+                              ifelse(Variable_Code == "FFRPTH16", "Fast food restaurants", "")))) %>%
+  ggplot(mapping = aes(x = Store, fill = PERPOV10, y = Avg_Stores)) +
+  geom_bar(position = "dodge", stat = "identity") +
+    geom_errorbar(mapping = aes(x = Store, 
+                              ymin = Avg_Stores - SE_Stores,
+                              ymax = Avg_Stores + SE_Stores),
+                width = 0.4, alpha = 0.9, position = position_dodge(0.9)) +
+  geom_hline(yintercept = 0, size = 1) +
+  scale_y_continuous(limits = c(0, 8)) +
+  coord_flip() +
+  scale_fill_manual(values = color.palette,
+                    guide = guide_legend(reverse = TRUE)) +
+  labs(title = "Poor counties have grocery stores—but they're not convenient",
+       subtitle ="Average store availability in 2016, grouped by county poverty designation\n",
+       x = "",
+       y = "\nStores per 100 people",
+       fill = "County poverty") +
+  theme(panel.background = element_blank(),
+        line = element_blank(),
+        panel.grid.major.x = element_line(color = "#d9d9d9"),
+        axis.text = element_text(size = 16),
+        axis.text.y = element_text(margin = margin(r = 0)),
+        axis.title = element_text(size = 16),
+        plot.title = element_text(size = 20, face = "bold"),
+        plot.subtitle = element_text(size = 18),
+        legend.position = "top",
+        legend.title= element_blank(),
+        legend.text = element_text(size = 16))
+ggsave("stores_barplot.png", width = 14, height = 7)
+
+```
+
+```{r bubble-plot}
+
+# obesity legends - size
+legends <- data %>%
+  filter(Variable_Code == "PC_FFRSALES12" |
+           Variable_Code == "FFRPTH16" |
+           Variable_Code == "POVRATE15" |
+           Variable_Code == "CHILDPOVRATE15" |
+           Variable_Code == "MEDHHINC15" |
+           Variable_Code == "PCT_NHBLACK10") %>%
+  group_by(Variable_Code, State) %>%
+  summarize(Avg_Legend = mean(Value)) %>%
+  rename(Legend = Variable_Code)
+
+obesity.data <- data %>%
+  filter(Variable_Code == "PCT_OBESE_ADULTS17") %>%
+  group_by(State) %>%
+  summarize(Avg_Obesity = mean(Value)) %>%
+  merge(state.access, by = "State") %>%
+  merge(legends, by = "State") %>%
+  filter(Variable_Code == "PCT_LACCESS_HHNV15",
+         Legend == "POVRATE15") %>%
+  arrange(desc(Avg_Access))
+
+obesity.data
+
+# plot obesity vs access, map size to poverty rate
+obesity.data %>%
+  ggplot(mapping = aes(x = Avg_Access, y = Avg_Obesity, size = Avg_Legend)) +
+  geom_point(color = "#D48E1C", alpha = 0.75) +
+  scale_size(range = c(1, 10)) +
+  labs(title = "Tying food access to an obesity crisis",
+       subtitle = "By percentage of state population, 2017",
+       x = "\nLow access, no vehicle population (%)",
+       y = "Adult obesity rate (%)\n",
+       size = "Poverty rate (%)") +
+  theme(panel.background = element_blank(),
+        panel.spacing = unit(4, "lines"),
+        line = element_blank(),
+        axis.line.x.bottom = element_line(color = "black", size = 1),
+        panel.grid.major.y = element_line(color = "#d9d9d9"),
+        strip.text = element_blank(),
+        axis.text = element_text(size = 16),
+        axis.title = element_text(size = 16),
+        plot.title = element_text(size = 20, face = "bold"),
+        plot.subtitle = element_text(size = 18),
+        legend.position = "right",
+        legend.title= element_text(size = 16),
+        legend.text = element_text(size = 16),
+        legend.key = element_rect(fill = "white")
+        )
+  # future - add annotations for states of interest
+  # geom_curve(aes(x = 5, y = 30, xend = 4, yend = 25),
+  #            color = "555555",
+  #            size = 0.5,
+  #            curvature = 0.2,
+  #            arrow = arrow(length = unit(0.03, "npc")))
+ggsave("obesity_bubble.png", width = 12, height = 7)
+
+```
